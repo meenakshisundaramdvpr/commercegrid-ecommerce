@@ -2,6 +2,7 @@ package com.commercegrid.auth.entity;
 
 import com.commercegrid.auth.enums.AdminRole;
 import com.commercegrid.auth.enums.AdminStatus;
+import com.commercegrid.auth.enums.StatusReasonCode;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -72,5 +73,8 @@ public class Admin {
 
     @Column
     private LocalDateTime lockedUntil;
+
+    @Enumerated(EnumType.STRING)
+    private StatusReasonCode statusReasonCode;
 
 }

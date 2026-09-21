@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +24,7 @@ public class AdminAuthController {
 
     private final AdminAuthService adminAuthService;
 
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @PostMapping
     public ResponseEntity<AdminResponse> createAdmin(
             @Valid @RequestBody AdminCreateRequest adminCreateRequest) {
@@ -62,8 +64,10 @@ public class AdminAuthController {
                 adminAuthService.getAdminByEmail(email)
         );
     }
- 
 
+
+
+    @PreAuthorize("hasRole('SUPER_ADMIN')")
     @PatchMapping("/{adminId}/status")
     @Operation(
             summary = "Update admin account status",
@@ -74,6 +78,9 @@ public class AdminAuthController {
             @ApiResponse(responseCode = "403", description = "Cannot modify your own status"),
             @ApiResponse(responseCode = "404", description = "Admin not found")
     })
+
+
+
     public ResponseEntity<AdminResponse> updateAdminStatus(
             @PathVariable Long adminId,
             @Valid @RequestBody AdminStatusUpdateRequest request) {

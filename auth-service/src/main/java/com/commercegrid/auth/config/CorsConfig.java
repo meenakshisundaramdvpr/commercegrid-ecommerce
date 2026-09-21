@@ -16,13 +16,17 @@ public class CorsConfig {
 
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // Add every origin your frontend actually runs on (dev + later, staging)
         configuration.setAllowedOrigins(List.of(
-                "http://localhost:3000",   // React default
-                "http://localhost:5173"    // Vite default
+                "https://localhost:3000",
+                "https://localhost:5173",
+                "https://bolt.new"
+                // If Bolt's actual preview domain differs (e.g. a *.webcontainer-api.io
+                // subdomain), replace/add the exact origin shown in your browser's address
+                // bar when the preview iframe is loaded -- check DevTools Console for the
+                // precise blocked origin if this doesn't resolve it.
         ));
 
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
         configuration.setExposedHeaders(List.of("Authorization"));
         configuration.setAllowCredentials(true);
