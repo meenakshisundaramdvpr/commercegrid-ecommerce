@@ -2,6 +2,10 @@ package com.commercegrid.auth.security;
 
 import com.commercegrid.auth.config.JwtUtil;
 
+import com.commercegrid.auth.entity.Admin;
+import com.commercegrid.auth.enums.AdminStatus;
+import com.commercegrid.auth.repository.AdminRepository;
+import com.commercegrid.auth.repository.AdminStatusAuditRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,6 +29,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
     private static final String AUTH_HEADER = "Authorization";
     private static final String BEARER_PREFIX = "Bearer ";
+    private final AdminStatusAuditRepository auditRepository;
+    private final AdminRepository adminRepository;
 
     private final JwtUtil jwtUtil;
 
@@ -36,9 +42,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader(AUTH_HEADER);
 
-        // No token present -> let the request continue unauthenticated;
-        // Spring Security's authorizeHttpRequests rules decide what happens next
-        // (permitAll routes proceed, .authenticated() routes get rejected by the entry point)
         if (authHeader == null || !authHeader.startsWith(BEARER_PREFIX)) {
             filterChain.doFilter(request, response);
             return;
@@ -46,29 +49,27 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String token = authHeader.substring(BEARER_PREFIX.length());
 
-        // Invalid/expired/tampered token -> do not authenticate, let it fall through
-        // to the same 401 handling as "no token at all"
         if (!jwtUtil.isTokenValid(token)) {
             filterChain.doFilter(request, response);
             return;
         }
 
+        // ---- new block starts here ----
         String email = jwtUtil.extractEmail(token);
-        String role = jwtUtil.extractRole(token);
 
-        // Only set authentication if nothing has already authenticated this request
-        if (email != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-
-            UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(
-                            email,
-                            null,
-                            List.of(new SimpleGrantedAuthority("ROLE_" + role))
-                    );
-
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+        Admin admin = adminRepository.findByEmail(email).orElse(null);
+        if (admin == null || admin.getStatus() != AdminStatus.ACTIVE) {
+            filterChain.doFilter(request, response);   // unauthenticated -> 401
+            return;
         }
 
+        if (SecurityContextHolder.getContext().getAuthentication() == null) {
+            var authentication = new UsernamePasswordAuthenticationToken(
+                    email, null,
+                    List.of(new SimpleGrantedAuthority("ROLE_" + admin.getRole().name())));
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+        }
         filterChain.doFilter(request, response);
+        // ---- new block ends here ----
     }
 }

@@ -4,20 +4,26 @@ import com.commercegrid.auth.config.JwtUtil;
 import com.commercegrid.auth.dto.*;
 import com.commercegrid.auth.entity.Admin;
 import com.commercegrid.auth.entity.AdminMapper;
+import com.commercegrid.auth.entity.AdminStatusAudit;
 import com.commercegrid.auth.enums.AdminRole;
 import com.commercegrid.auth.enums.AdminStatus;
 import com.commercegrid.auth.exception.*;
 import com.commercegrid.auth.repository.AdminRepository;
 
+import com.commercegrid.auth.repository.AdminStatusAuditRepository;
 import com.commercegrid.auth.util.AuthConstants;
 
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+
+@Slf4j                      // add this
 
 @Service
 @RequiredArgsConstructor
@@ -26,6 +32,7 @@ public class AdminAuthServiceImpl implements AdminAuthService {
     private final AdminRepository adminRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final AdminStatusAuditRepository adminStatusAuditRepository;
 
    /* @Override
     public AdminResponse createAdmin(AdminCreateRequest adminCreateRequest) {
@@ -122,12 +129,12 @@ public class AdminAuthServiceImpl implements AdminAuthService {
             adminRepository.save(admin);
         }
 
-        if (admin.getStatus() != AdminStatus.ACTIVE) {
-            throw new InvalidCredentialsException(
-                    "Admin account is " + admin.getStatus().name().toLowerCase()
-            );
+        if (admin.getStatus() == AdminStatus.LOCKED) {
+            throw new AccountLockedException("Your account is locked. Contact your security administrator");
         }
-
+        if (admin.getStatus() == AdminStatus.INACTIVE) {
+            throw new InvalidAdminOperationException("Your account is deactivated. Contact your administrator");
+        }
         String accessToken = jwtUtil.generateToken(admin.getEmail(), admin.getRole().name());
 
         return AdminLoginResponse.builder()
@@ -172,41 +179,68 @@ public class AdminAuthServiceImpl implements AdminAuthService {
         return AdminMapper.toAdminResponse(savedAdmin);
     }
     @Override
+    @Transactional
     public AdminResponse updateAdminStatus(
             Long adminId, AdminStatusUpdateRequest request, String requestingAdminEmail) {
 
         Admin admin = adminRepository.findById(adminId)
                 .orElseThrow(() -> new AdminNotFoundException("Admin not found with id: " + adminId));
 
-        // Four-eyes principle: an admin can't change their own status
+        AdminStatus previous = admin.getStatus();
+        AdminStatus target = request.getNewStatus();
+
         if (admin.getEmail().equalsIgnoreCase(requestingAdminEmail)) {
             throw new InvalidAdminOperationException("You cannot change your own account status");
         }
+        if (previous == target) {
+            throw new InvalidAdminOperationException("Admin is already " + target);
+        }
+        if (request.getReasonCode().getTargetStatus() != target) {
+            throw new InvalidAdminOperationException(
+                    "Reason code " + request.getReasonCode() + " is not valid for status " + target);
+        }
+        if (previous == AdminStatus.INACTIVE && target == AdminStatus.LOCKED) {
+            throw new InvalidAdminOperationException("Reactivate the account before locking it");
+        }
+        // Never leave the system without an active admin
+        if (previous == AdminStatus.ACTIVE && target != AdminStatus.ACTIVE
+                && adminRepository.countByStatus(AdminStatus.ACTIVE) <= 1) {
+            throw new InvalidAdminOperationException("Cannot disable the last active admin");
+        }
 
-        AdminStatus previousStatus = admin.getStatus();
-
-        admin.setStatus(request.getNewStatus());
+        admin.setStatus(target);
+        admin.setStatusReasonCode(request.getReasonCode());
         admin.setStatusReason(request.getStatusReason());
         admin.setStatusUpdatedAt(LocalDateTime.now());
 
-        Admin updatedAdmin = adminRepository.save(admin);
-
-        // Notify only on an actual change to LOCKED/INACTIVE -- not on reactivation or no-op
-        if (previousStatus != request.getNewStatus()
-                && (request.getNewStatus() == AdminStatus.LOCKED
-                || request.getNewStatus() == AdminStatus.INACTIVE)) {
-            try {
-                emailService.sendStatusChangeEmail(
-                        updatedAdmin.getEmail(),
-                        updatedAdmin.getName(),
-                        updatedAdmin.getStatus(),
-                        request.getStatusReason()
-                );
-            } catch (Exception ex) {
-                System.err.println("Failed to send status change email: " + ex.getMessage());
-            }
+        if (target == AdminStatus.ACTIVE) {          // clean slate on reactivation
+            admin.setFailedAttempts(0);
+            admin.setLockedUntil(null);
         }
 
-        return AdminMapper.toAdminResponse(updatedAdmin);
+        Admin saved = adminRepository.save(admin);
+
+        adminStatusAuditRepository.save(AdminStatusAudit.builder()
+                .adminId(saved.getId())
+                .previousStatus(previous)
+                .newStatus(target)
+                .reasonCode(request.getReasonCode())
+                .reasonText(request.getStatusReason())
+                .changedBy(requestingAdminEmail)
+                .changedAt(LocalDateTime.now())
+                .build());
+
+        log.info("Admin {} status {} -> {} by {} ({})",
+                saved.getId(), previous, target, requestingAdminEmail, request.getReasonCode());
+
+        if (target == AdminStatus.LOCKED || target == AdminStatus.INACTIVE) {
+            try {
+                emailService.sendStatusChangeEmail(
+                        saved.getEmail(), saved.getName(), target, request.getStatusReason());
+            } catch (Exception ex) {
+                log.error("Status change email failed for admin {}", saved.getId(), ex);
+            }
+        }
+        return AdminMapper.toAdminResponse(saved);
     }
 }

@@ -1,6 +1,3 @@
 package com.commercegrid.auth.enums;
 
-public enum AdminRole {
-
-    ADMIN
-}
+public enum AdminRole { SUPER_ADMIN, ADMIN }
