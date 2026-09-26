@@ -52,7 +52,6 @@ public class SecurityConfig {
 
         return new InMemoryUserDetailsManager(user);
     }
-
     /**
      * Handles requests that fail authentication/authorization -- returns a clean
      * JSON 401 matching our standard ErrorResponse shape, instead of Spring's
